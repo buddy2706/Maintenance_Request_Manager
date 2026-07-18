@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+:root {
+  --ground: #f4f6f5;
+  --surface: #ffffff;
+  --surface-2: #edf1ef;
+  --ink: #16201c;
+  --ink-soft: #3a4843;
+  --muted: #5e6e67;
+  --line: #dce3e0;
+  --accent: #0f7a63;
+  --accent-soft: #e3f0ec;
+  --good: #2e9e6b;
+  --warn: #b9820f;
+  --crit: #c4503b;
+  --info: #3e7cb1;
+  --copper: #b4713a;
+  --shadow: 0 1px 2px rgba(20, 40, 34, 0.06), 0 8px 24px -12px rgba(20, 40, 34, 0.14);
+  --font-display: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --ground: #0f1513;
+    --surface: #17201d;
+    --surface-2: #1e2926;
+    --ink: #e7eeea;
+    --ink-soft: #b7c4be;
+    --muted: #8b9a93;
+    --line: #29332f;
+    --accent: #35b394;
+    --accent-soft: #14332b;
+    --good: #45b67f;
+    --warn: #d9a63e;
+    --crit: #db6a55;
+    --info: #6aa6d8;
+    --copper: #d08e56;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -14px rgba(0, 0, 0, 0.6);
+  }
+}
+
+:root[data-theme='dark'] {
+  --ground: #0f1513;
+  --surface: #17201d;
+  --surface-2: #1e2926;
+  --ink: #e7eeea;
+  --ink-soft: #b7c4be;
+  --muted: #8b9a93;
+  --line: #29332f;
+  --accent: #35b394;
+  --accent-soft: #14332b;
+  --good: #45b67f;
+  --warn: #d9a63e;
+  --crit: #db6a55;
+  --info: #6aa6d8;
+  --copper: #d08e56;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px -14px rgba(0, 0, 0, 0.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100svh;
+}
