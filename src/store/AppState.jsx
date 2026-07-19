@@ -1,117 +1,193 @@
-import { createContext, useContext, useEffect, useMemo, useReducer } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { supabase } from '../lib/supabaseClient.js';
+import { useProfile } from './ProfileContext.jsx';
 import * as wo from '../lib/workOrders.js';
-
-const STORAGE_KEY = 'mf-work-orders-v1';
 
 const AppStateContext = createContext(null);
 
-function reducer(state, action) {
-  const updateOrder = (id, updater) => state.map((o) => (o.id === id ? updater(o) : o));
+function fromRow(row) {
+  return {
+    id: row.id,
+    seq: row.seq,
+    category: row.category,
+    symptom: row.symptom,
+    priority: row.priority,
+    state: row.state,
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+    resolvedAt: row.resolved_at ? new Date(row.resolved_at).getTime() : null,
+    managerTouches: row.manager_touches,
+    clarifyRequested: row.clarify_requested,
+    repeat: row.repeat,
+    reassignCount: row.reassign_count,
+    residentId: row.resident_id,
+    vendorId: row.vendor_id,
+    scheduledFor: row.scheduled_for,
+    onHoldReason: row.on_hold_reason,
+    history: (row.work_order_history ?? [])
+      .slice()
+      .sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at))
+      .map((h) => ({ at: new Date(h.occurred_at).getTime(), actor: h.actor, action: h.action, label: h.label })),
+  };
+}
 
-  switch (action.type) {
-    case 'LOAD':
-      return action.orders;
-    case 'RESET':
-      return seedDemoOrders();
-    case 'NEW_ORDER': {
-      const order = wo.createWorkOrder(action.payload);
-      return [order, ...state];
+// Local (camelCase) field -> DB column, for diffing what a transition changed.
+const FIELD_TO_COLUMN = {
+  state: 'state',
+  priority: 'priority',
+  managerTouches: 'manager_touches',
+  clarifyRequested: 'clarify_requested',
+  repeat: 'repeat',
+  reassignCount: 'reassign_count',
+  vendorId: 'vendor_id',
+  scheduledFor: 'scheduled_for',
+  onHoldReason: 'on_hold_reason',
+  resolvedAt: 'resolved_at',
+  updatedAt: 'updated_at',
+};
+
+function diffToColumns(prev, next) {
+  const changes = {};
+  for (const [field, column] of Object.entries(FIELD_TO_COLUMN)) {
+    if (next[field] !== prev[field]) {
+      changes[column] =
+        field === 'resolvedAt' || field === 'updatedAt' ? (next[field] ? new Date(next[field]).toISOString() : null) : next[field];
     }
-    case 'REQUEST_INFO':
-      return updateOrder(action.id, (o) => wo.requestInfo(o));
-    case 'TRIAGE':
-      return updateOrder(action.id, (o) => wo.triage(o, action.payload));
-    case 'ASSIGN_VENDOR':
-      return updateOrder(action.id, (o) => wo.assignVendor(o, action.payload.vendor));
-    case 'VENDOR_ACCEPT':
-      return updateOrder(action.id, (o) => wo.vendorAccept(o));
-    case 'VENDOR_DECLINE':
-      return updateOrder(action.id, (o) => wo.vendorDeclineOrTimeout(o));
-    case 'LOCK_SCHEDULE':
-      return updateOrder(action.id, (o) => wo.lockSchedule(o, action.payload.when));
-    case 'PUT_ON_HOLD':
-      return updateOrder(action.id, (o) => wo.putOnHold(o, action.payload.reason));
-    case 'RESUME':
-      return updateOrder(action.id, (o) => wo.resumeFromHold(o));
-    case 'COMPLETE':
-      return updateOrder(action.id, (o) => wo.complete(o));
-    case 'CONFIRM_FIXED':
-      return updateOrder(action.id, (o) => wo.confirmFixed(o));
-    case 'REPORT_NOT_FIXED':
-      return updateOrder(action.id, (o) => wo.reportNotFixed(o));
-    default:
-      return state;
   }
-}
-
-function daysAgo(n) {
-  return Date.now() - n * 24 * 60 * 60 * 1000;
-}
-
-function seedDemoOrders() {
-  const seeds = [
-    { category: 'Plumbing', symptom: 'Leaking faucet', createdDaysAgo: 6, path: 'resolved' },
-    { category: 'HVAC', symptom: 'No heat', createdDaysAgo: 4, path: 'resolved-repeat' },
-    { category: 'Electrical', symptom: 'Breaker keeps tripping', createdDaysAgo: 2, path: 'in_progress' },
-    { category: 'Appliance', symptom: 'Fridge not cooling', createdDaysAgo: 1, path: 'scheduling' },
-    { category: 'Pest', symptom: 'Ants in kitchen', createdDaysAgo: 3, path: 'offered' },
-    { category: 'Structural', symptom: 'Ceiling water stain', createdDaysAgo: 0.5, path: 'triaged' },
-    { category: 'Plumbing', symptom: 'Clogged drain', createdDaysAgo: 0.2, path: 'submitted' },
-  ];
-
-  return seeds.map((seed, i) => {
-    const created = daysAgo(seed.createdDaysAgo);
-    let order = wo.createWorkOrder({ category: seed.category, symptom: seed.symptom }, created);
-    const vendor = wo.VENDORS[i % wo.VENDORS.length];
-
-    if (seed.path === 'submitted') return order;
-
-    order = wo.triage(order, {}, created + 1000 * 60 * 40);
-    if (seed.path === 'triaged') return order;
-
-    order = wo.assignVendor(order, vendor, created + 1000 * 60 * 90);
-    if (seed.path === 'offered') return order;
-
-    order = wo.vendorAccept(order, created + 1000 * 60 * 130);
-    if (seed.path === 'scheduling') return order;
-
-    order = wo.lockSchedule(order, 'Tomorrow 2–4pm', created + 1000 * 60 * 60 * 5);
-    if (seed.path === 'in_progress') return order;
-
-    order = wo.complete(order, created + 1000 * 60 * 60 * 30);
-    if (seed.path === 'resolved') return order;
-
-    if (seed.path === 'resolved-repeat') {
-      order = wo.reportNotFixed(order, created + 1000 * 60 * 60 * 40);
-      order = wo.assignVendor(order, vendor, created + 1000 * 60 * 60 * 41);
-      order = wo.vendorAccept(order, created + 1000 * 60 * 60 * 42);
-      order = wo.lockSchedule(order, 'Next day 9–11am', created + 1000 * 60 * 60 * 44);
-      order = wo.complete(order, created + 1000 * 60 * 60 * 60);
-      order = { ...order, repeat: true };
-      return order;
-    }
-    return order;
-  });
+  return changes;
 }
 
 export function AppStateProvider({ children }) {
-  const [orders, dispatch] = useReducer(reducer, null, () => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {
-      // ignore corrupt storage, fall through to seed data
-    }
-    return seedDemoOrders();
-  });
+  const { profile } = useProfile();
+  const [orders, setOrders] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const refetch = useCallback(async () => {
+    const { data } = await supabase.from('work_orders').select('*, work_order_history(*)').order('created_at');
+    setOrders((data ?? []).map(fromRow));
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(orders));
-  }, [orders]);
+    refetch();
+    const channel = supabase
+      .channel('work-orders-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_orders' }, refetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'work_order_history' }, refetch)
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refetch]);
+
+  useEffect(() => {
+    if (profile?.role !== 'manager' && profile?.role !== 'admin') {
+      setVendors([]);
+      return;
+    }
+    supabase
+      .from('profiles')
+      .select('id, display_name')
+      .eq('role', 'vendor')
+      .then(({ data }) => setVendors(data ?? []));
+  }, [profile?.role]);
+
+  const persist = useCallback(async (prevOrder, nextOrder) => {
+    // History insert MUST happen before the work_orders update: its RLS check
+    // authorizes via the *current* work_orders row (e.g. vendor_id = auth.uid()),
+    // and some transitions (vendor decline) clear that same ownership column —
+    // updating first would make the insert's ownership check fail.
+    const newEntry = nextOrder.history[nextOrder.history.length - 1];
+    await supabase.from('work_order_history').insert({
+      work_order_id: prevOrder.id,
+      actor: newEntry.actor,
+      action: newEntry.action,
+      label: newEntry.label,
+    });
+    const changes = diffToColumns(prevOrder, nextOrder);
+    if (Object.keys(changes).length) {
+      await supabase.from('work_orders').update(changes).eq('id', prevOrder.id);
+    }
+  }, []);
 
   const metrics = useMemo(() => wo.computeMetrics(orders), [orders]);
 
-  const value = useMemo(() => ({ orders, metrics, dispatch }), [orders, metrics]);
+  const findOrder = useCallback((id) => orders.find((o) => o.id === id), [orders]);
+
+  const actions = useMemo(
+    () => ({
+      async newOrder({ category, symptom }) {
+        const draft = wo.createWorkOrder({ category, symptom });
+        const { data } = await supabase
+          .from('work_orders')
+          .insert({
+            category: draft.category,
+            symptom: draft.symptom,
+            priority: draft.priority,
+            state: draft.state,
+            resident_id: profile.id,
+          })
+          .select()
+          .single();
+        if (data) {
+          await supabase.from('work_order_history').insert({
+            work_order_id: data.id,
+            actor: 'resident',
+            action: 'submitted',
+            label: 'Resident submitted guided intake',
+          });
+        }
+      },
+      requestInfo(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.requestInfo(order));
+      },
+      triage(id, opts) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.triage(order, opts));
+      },
+      assignVendor(id, vendorId) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.assignVendor(order, vendorId));
+      },
+      vendorAccept(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.vendorAccept(order));
+      },
+      vendorDecline(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.vendorDeclineOrTimeout(order));
+      },
+      lockSchedule(id, when) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.lockSchedule(order, when));
+      },
+      putOnHold(id, reason) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.putOnHold(order, reason));
+      },
+      resume(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.resumeFromHold(order));
+      },
+      complete(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.complete(order));
+      },
+      confirmFixed(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.confirmFixed(order));
+      },
+      reportNotFixed(id) {
+        const order = findOrder(id);
+        if (order) persist(order, wo.reportNotFixed(order));
+      },
+    }),
+    [findOrder, persist, profile?.id]
+  );
+
+  const value = useMemo(() => ({ orders, metrics, vendors, loading, actions }), [orders, metrics, vendors, loading, actions]);
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;
 }

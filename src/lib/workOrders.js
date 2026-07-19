@@ -18,8 +18,23 @@ export const STATE_LABEL = {
   resolved: 'Completed / Closed',
 };
 
+// Kanban dot-color legend only (visually: whose card this "belongs to" at a glance).
 export const STATE_OWNER = {
   submitted: 'resident',
+  triaged: 'manager',
+  offered: 'vendor',
+  scheduling: 'vendor',
+  in_progress: 'vendor',
+  on_hold: 'manager',
+  resolved: 'resident',
+};
+
+// Who is authorized to perform the *next* transition out of a state — used for
+// role-gating action buttons. Deliberately separate from STATE_OWNER: e.g. a
+// submitted order visually "belongs" to the resident who filed it, but it's the
+// manager who acts on it next (triage / request info / flag emergency).
+export const NEXT_ACTOR = {
+  submitted: 'manager',
   triaged: 'manager',
   offered: 'vendor',
   scheduling: 'vendor',
@@ -37,8 +52,6 @@ export const CATEGORIES = {
   Structural: ['Ceiling water stain', 'Door won’t latch'],
 };
 
-export const VENDORS = ['A-1 Plumbing', 'BrightSpark Electric', 'Cool Air HVAC', 'Fix-It Appliance Co.', 'Guardian Pest Control'];
-
 // Illustrative pre-workflow baseline, from the bet document's own evidence section.
 export const BASELINE = {
   medianResolutionDays: 5.1,
@@ -46,11 +59,6 @@ export const BASELINE = {
   repeatVisitRate: 0.34,
   clarifyRate: 0.46,
 };
-
-let seq = 1;
-function nextId() {
-  return `WO-${String(1000 + seq++).padStart(4, '0')}`;
-}
 
 export function randomRequest(rand = Math.random) {
   const categories = Object.keys(CATEGORIES);
@@ -60,22 +68,22 @@ export function randomRequest(rand = Math.random) {
   return { category, symptom };
 }
 
+// id/seq/createdAt are assigned by Postgres on insert — this only computes the
+// fields a resident's submission needs to send.
 export function createWorkOrder({ category, symptom, priority = 'standard' }, now) {
   const ts = now ?? Date.now();
   return {
-    id: nextId(),
     category,
     symptom,
     priority,
     state: 'submitted',
-    createdAt: ts,
     updatedAt: ts,
     resolvedAt: null,
     managerTouches: 0,
     clarifyRequested: false,
     repeat: false,
     reassignCount: 0,
-    vendor: null,
+    vendorId: null,
     scheduledFor: null,
     onHoldReason: null,
     history: [
@@ -106,29 +114,29 @@ export function triage(order, { emergency = false } = {}, now) {
   return log({ ...order, priority, state: nextState, managerTouches: order.managerTouches + 1 }, 'manager', 'triaged', label, ts);
 }
 
-export function assignVendor(order, vendorName, now) {
+export function assignVendor(order, vendorId, now) {
   const ts = now ?? Date.now();
   return log(
-    { ...order, state: 'offered', vendor: vendorName, managerTouches: order.managerTouches + 1 },
+    { ...order, state: 'offered', vendorId, managerTouches: order.managerTouches + 1 },
     'manager',
     'assigned',
-    `Manager assigned ${vendorName}`,
+    'Manager assigned a vendor',
     ts
   );
 }
 
 export function vendorAccept(order, now) {
   const ts = now ?? Date.now();
-  return log({ ...order, state: 'scheduling' }, 'vendor', 'accepted', `${order.vendor} accepted the job`, ts);
+  return log({ ...order, state: 'scheduling' }, 'vendor', 'accepted', 'Vendor accepted the job', ts);
 }
 
 export function vendorDeclineOrTimeout(order, now) {
   const ts = now ?? Date.now();
   return log(
-    { ...order, state: 'triaged', vendor: null, reassignCount: order.reassignCount + 1 },
+    { ...order, state: 'triaged', vendorId: null, reassignCount: order.reassignCount + 1 },
     'vendor',
     'declined',
-    `${order.vendor ?? 'Vendor'} declined / timed out — back to manager for reassignment`,
+    'Vendor declined / timed out — back to manager for reassignment',
     ts
   );
 }
