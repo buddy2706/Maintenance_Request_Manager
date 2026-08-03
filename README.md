@@ -1,6 +1,6 @@
 # Maintenance Coordination — Value & Flow
 
-A multi-user simulation of the **Guided Maintenance Workflow** bet — a Property Meld–style
+A multi-user simulation of the **Guided Maintenance Workflow** bet — a Property mgmt–style
 product concept for property-maintenance coordination between residents, property managers,
 and vendors.
 
